@@ -1,0 +1,1338 @@
+diff --git dist/game/data/scripts/instances/KartiasLabyrinth/KartiaHelperAdolph.java dist/game/data/scripts/instances/KartiasLabyrinth/KartiaHelperAdolph.java
+index d4af4bd..dde8ea3 100644
+--- dist/game/data/scripts/instances/KartiasLabyrinth/KartiaHelperAdolph.java
++++ dist/game/data/scripts/instances/KartiasLabyrinth/KartiaHelperAdolph.java
+@@ -21,4 +21,6 @@
+ package instances.KartiasLabyrinth;
+ 
++import java.util.List;
++
+ import org.l2jmobius.gameserver.entity.Location;
+ import org.l2jmobius.gameserver.entity.World;
+@@ -42,6 +44,6 @@
+ 
+ /**
+- * Kartia Helper Adolph AI.
+- * @author flanagak
++ * Kartia Helper Adolph AI. - Refactored for Retail mechanics (06/2026)
++ * @author flanagak, Notorion
+  */
+ public class KartiaHelperAdolph extends Script
+@@ -107,34 +109,92 @@
+ 			final StatSet npcVars = npc.getVariables();
+ 			final Player plr = npcVars.getObject("PLAYER_OBJECT", Player.class);
+-			if (plr != null)
++			if ((plr == null) || plr.isAlikeDead() || !plr.isOnline())
+ 			{
+-				final double distance = npc.calculateDistance2D(plr);
+-				if (distance > 300)
++				return;
++			}
++			
++			// Mode attack
++			Monster targetMonster = null;
++			final WorldObject currentTarget = npc.getTarget();
++			
++			if (npc.isInCombat() && (currentTarget instanceof Monster) && !((Monster) currentTarget).isDead())
++			{
++				targetMonster = (Monster) currentTarget;
++			}
++			else
++			{
++				// Actively search for the closest monster (300 range)
++				final List<Monster> monsters = World.getVisibleObjectsInRange(npc, Monster.class, 300);
++				double closestDistance = Double.MAX_VALUE;
++				for (Monster monster : monsters)
+ 				{
+-					final Location loc = new Location(plr.getX(), plr.getY(), plr.getZ() + 50);
+-					final Location randLoc = new Location(loc.getX() + getRandom(-100, 100), loc.getY() + getRandom(-100, 100), loc.getZ());
+-					if (distance > 600)
++					if (monster.isTargetable() && !monster.isDead() && GeoEngine.getInstance().canSeeTarget(npc, monster) && !ArrayUtil.contains(MIRRORS, monster.getId()) && !ArrayUtil.contains(KARTIA_FRIENDS, monster.getId()))
+ 					{
+-						npc.teleToLocation(loc);
+-					}
+-					else
+-					{
+-						npc.setRunning();
+-					}
+-					
+-					addMoveToDesire(npc, randLoc, 23);
+-				}
+-				else if (!npc.isInCombat() || (npc.getTarget() == null))
+-				{
+-					final Monster monster = World.getRandomVisibleObjectInRange(npc, Monster.class, 500);
+-					if (monster != null)
+-					{
+-						if (monster.isTargetable() && GeoEngine.getInstance().canSeeTarget(npc, monster) && !ArrayUtil.contains(MIRRORS, monster.getId()) && !ArrayUtil.contains(KARTIA_FRIENDS, monster.getId()))
++						final double dist = npc.calculateDistance3D(monster);
++						if (dist < closestDistance)
+ 						{
+-							addAttackDesire(npc, monster);
++							closestDistance = dist;
++							targetMonster = monster;
+ 						}
+ 					}
+ 				}
+ 			}
++			
++			final int maxDistance = (instance.getParameters().getInt("ROOM", 1) == 1) ? 600 : 2000;
++			
++			if (targetMonster != null)
++			{
++				if (npc.calculateDistance3D(plr) > maxDistance)
++				{
++					npc.abortAttack();
++					npc.abortCast();
++					npc.setTarget(null);
++					npc.teleToLocation(plr.getLocation());
++					return;
++				}
++				
++				npc.setTarget(targetMonster);
++				addAttackDesire(npc, targetMonster);
++				if (npc.isScriptValue(0) && (npc.getCurrentHp() < (npc.getMaxHp() * 0.5)))
++				{
++					npc.setScriptValue(1);
++				}
++				return;
++			}
++			
++			// Mode peace
++			final double distance = npc.calculateDistance3D(plr);
++			
++			final double angle = (plr.getHeading() / 65535.0) * 2 * Math.PI;
++			final int distanceToTarget = 150;
++			final int newX = plr.getX() + (int) (Math.cos(angle) * distanceToTarget);
++			final int newY = plr.getY() + (int) (Math.sin(angle) * distanceToTarget);
++			final Location safeLoc = new Location(newX, newY, plr.getZ());
++			
++			if (distance > maxDistance)
++			{
++				npc.teleToLocation(plr.getLocation());
++			}
++			else if (npc.calculateDistance2D(safeLoc) > 50)
++			{
++				// Move to location
++				npc.setRunning();
++				npc.getAI().setIntentionActive();
++				addMoveToDesire(npc, safeLoc, 23);
++			}
++			else
++			{
++				// Close to player - verify nearby monsters to attack
++				final List<Monster> monsterList = World.getVisibleObjectsInRange(npc, Monster.class, 350);
++				if (!monsterList.isEmpty())
++				{
++					final Monster monster = getRandomEntry(monsterList);
++					if (monster.isTargetable() && !monster.isDead() && GeoEngine.getInstance().canSeeTarget(npc, monster) && !ArrayUtil.contains(MIRRORS, monster.getId()) && !ArrayUtil.contains(KARTIA_FRIENDS, monster.getId()))
++					{
++						npc.setTarget(monster);
++						addAttackDesire(npc, monster);
++					}
++				}
++			}
+ 		}
+ 		else if ((instance != null) && event.equals("USE_SKILL"))
+diff --git dist/game/data/scripts/instances/KartiasLabyrinth/KartiaHelperBarton.java dist/game/data/scripts/instances/KartiasLabyrinth/KartiaHelperBarton.java
+index defaca6..2ae4a81 100644
+--- dist/game/data/scripts/instances/KartiasLabyrinth/KartiaHelperBarton.java
++++ dist/game/data/scripts/instances/KartiasLabyrinth/KartiaHelperBarton.java
+@@ -41,6 +41,6 @@
+ 
+ /**
+- * Kartia Helper Barton AI. Tyrr Warrior
+- * @author flanagak
++ * Kartia Helper Barton AI. Tyrr Warrior - Refactored for Retail mechanics (06/2026)
++ * @author flanagak, Notorion
+  */
+ public class KartiaHelperBarton extends Script
+@@ -104,32 +104,77 @@
+ 		{
+ 			final FriendlyNpc adolph = npc.getVariables().getObject("ADOLPH_OBJECT", FriendlyNpc.class);
+-			if (adolph != null)
++			if (adolph == null)
+ 			{
+-				final double distance = npc.calculateDistance2D(adolph);
+-				if (distance > 300)
++				return;
++			}
++			
++			final double distance = npc.calculateDistance2D(adolph);
++			
++			// Mode Combat
++			// In combat with valid target: do not interrupt to follow Adolph
++			// Regroup only if target is completely lost
++			if (npc.isInCombat())
++			{
++				final WorldObject currentTarget = npc.getTarget();
++				if ((currentTarget != null) && (currentTarget instanceof Monster) && !((Monster) currentTarget).isDead())
+ 				{
+-					final Location loc = new Location(adolph.getX(), adolph.getY(), adolph.getZ() + 50);
+-					final Location randLoc = new Location(loc.getX() + getRandom(-100, 100), loc.getY() + getRandom(-100, 100), loc.getZ());
+-					if (distance > 600)
+-					{
+-						npc.teleToLocation(loc);
+-					}
+-					else
+-					{
+-						npc.setRunning();
+-					}
+-					
+-					addMoveToDesire(npc, randLoc, 23);
++					// Attacking normally - do nothing
++					return;
+ 				}
+-				else if (!npc.isInCombat() || (npc.getTarget() == null))
++				// Copy target
++				final WorldObject adolphTarget = adolph.getTarget();
++				if ((adolphTarget != null) && adolphTarget.isMonster())
+ 				{
+-					final WorldObject target = adolph.getTarget();
+-					if ((target != null) && target.isMonster())
++					final Monster monster = adolphTarget.asMonster();
++					if ((monster != null) && !monster.isDead() && !ArrayUtil.contains(KARTIA_FRIENDS, monster.getId()))
+ 					{
+-						final Monster monster = target.asMonster();
+-						if ((monster != null) && adolph.isInCombat() && !ArrayUtil.contains(KARTIA_FRIENDS, monster.getId()))
+-						{
+-							addAttackDesire(npc, monster);
+-						}
++						npc.setTarget(monster);
++						addAttackDesire(npc, monster);
++					}
++				}
++				return;
++			}
++			
++			// Mode peace
++			// Follow Adolph in vanguard position
++			boolean shouldFollow = false;
++			if (distance > 600)
++			{
++				shouldFollow = true;
++			}
++			else if ((npc.getTarget() == null) && (distance > 150))
++			{
++				shouldFollow = true;
++			}
++			
++			if (shouldFollow)
++			{
++				final double angle = ((adolph.getHeading() / 65535.0) * 2 * Math.PI) + (Math.PI / 2);
++				final int distanceToTarget = 100;
++				final int newX = adolph.getX() + (int) (Math.cos(angle) * distanceToTarget);
++				final int newY = adolph.getY() + (int) (Math.sin(angle) * distanceToTarget);
++				final Location safeLoc = new Location(newX, newY, adolph.getZ());
++				
++				if (distance > 600)
++				{
++					npc.teleToLocation(safeLoc);
++				}
++				else if (npc.calculateDistance2D(safeLoc) > 50)
++				{
++					npc.setRunning();
++					npc.getAI().setIntentionActive();
++					addMoveToDesire(npc, safeLoc, 23);
++				}
++			}
++			else
++			{
++				final WorldObject target = adolph.getTarget();
++				if ((target != null) && target.isMonster())
++				{
++					final Monster monster = target.asMonster();
++					if ((monster != null) && !monster.isDead() && !ArrayUtil.contains(KARTIA_FRIENDS, monster.getId()))
++					{
++						npc.setTarget(monster);
++						addAttackDesire(npc, monster);
+ 					}
+ 				}
+@@ -154,4 +199,9 @@
+ 		if (status == 1)
+ 		{
++			final Npc adolph = instance.getNpcs().stream().filter(n -> ArrayUtil.contains(KARTIA_ADOLPH, n.getId())).findFirst().orElse(null);
++			if (adolph != null)
++			{
++				instance.getAliveNpcs(KARTIA_BARTON).forEach(barton -> barton.getVariables().set("ADOLPH_OBJECT", adolph));
++			}
+ 			instance.getAliveNpcs(KARTIA_BARTON).forEach(barton -> getTimers().addRepeatingTimer("CHECK_ACTION", 3000, barton, null));
+ 			instance.getAliveNpcs(KARTIA_BARTON).forEach(barton -> getTimers().addRepeatingTimer("USE_SKILL", 6000, barton, null));
+diff --git dist/game/data/scripts/instances/KartiasLabyrinth/KartiaHelperElise.java dist/game/data/scripts/instances/KartiasLabyrinth/KartiaHelperElise.java
+index e6aacb8..32e1823 100644
+--- dist/game/data/scripts/instances/KartiasLabyrinth/KartiaHelperElise.java
++++ dist/game/data/scripts/instances/KartiasLabyrinth/KartiaHelperElise.java
+@@ -46,6 +46,6 @@
+ 
+ /**
+- * Kartia Helper Elise AI. Healer
+- * @author flanagak
++ * Kartia Helper Elise AI. Healer - Refactored for Retail mechanics (06/2026)
++ * @author flanagak, Notorion
+  */
+ public class KartiaHelperElise extends Script
+@@ -132,25 +132,24 @@
+ 			}
+ 			
+-			if (adolph != null)
++			// Follow Adolph in rearguard position
++			// Distance-based movement
++			if ((adolph != null) && !npc.isCastingNow())
+ 			{
+-				final double distance = npc.calculateDistance2D(adolph);
+-				if (distance > 300)
++				final double distance = npc.calculateDistance3D(adolph);
++				final double angle = ((adolph.getHeading() / 65535.0) * 2 * Math.PI) - ((3 * Math.PI) / 4);
++				final int newX = adolph.getX() + (int) (Math.cos(angle) * 100);
++				final int newY = adolph.getY() + (int) (Math.sin(angle) * 100);
++				final Location safeLoc = new Location(newX, newY, adolph.getZ());
++				
++				if (distance > 2000)
+ 				{
+-					final Location loc = new Location(adolph.getX(), adolph.getY(), adolph.getZ() + 50);
+-					final Location randLoc = new Location(loc.getX() + getRandom(-100, 100), loc.getY() + getRandom(-100, 100), loc.getZ());
+-					if (distance > 600)
+-					{
+-						npc.teleToLocation(loc);
+-					}
+-					else
+-					{
+-						npc.setRunning();
+-					}
+-					
+-					addMoveToDesire(npc, randLoc, 23);
++					npc.teleToLocation(safeLoc);
++				}
++				else if (npc.calculateDistance2D(safeLoc) > 80)
++				{
++					npc.setRunning();
++					npc.getAI().setIntentionMoveTo(safeLoc);
+ 				}
+ 			}
+-			
+-			npc.setTarget(npc);
+ 		}
+ 	}
+@@ -246,4 +245,9 @@
+ 		if (status == 1)
+ 		{
++			final Npc adolph = instance.getNpcs().stream().filter(n -> ArrayUtil.contains(KARTIA_ADOLPH, n.getId())).findFirst().orElse(null);
++			if (adolph != null)
++			{
++				instance.getAliveNpcs(KARTIA_ELISE).forEach(elise -> elise.getVariables().set("ADOLPH_OBJECT", adolph));
++			}
+ 			instance.getAliveNpcs(KARTIA_ELISE).forEach(elise -> getTimers().addRepeatingTimer("CHECK_ACTION", 3000, elise, null));
+ 		}
+diff --git dist/game/data/scripts/instances/KartiasLabyrinth/KartiaHelperEliyah.java dist/game/data/scripts/instances/KartiasLabyrinth/KartiaHelperEliyah.java
+index 10fe9eb..646c2c5 100644
+--- dist/game/data/scripts/instances/KartiasLabyrinth/KartiaHelperEliyah.java
++++ dist/game/data/scripts/instances/KartiasLabyrinth/KartiaHelperEliyah.java
+@@ -37,6 +37,6 @@
+ 
+ /**
+- * Kartia Helper Eliyah AI. Summoner
+- * @author flanagak
++ * Kartia Helper Eliyah AI. Summoner - Refactored for Retail mechanics (06/2026)
++ * @author flanagak, Notorion
+  */
+ public class KartiaHelperEliyah extends Script
+@@ -100,32 +100,76 @@
+ 		{
+ 			final FriendlyNpc adolph = npc.getVariables().getObject("ADOLPH_OBJECT", FriendlyNpc.class);
+-			if (adolph != null)
++			if (adolph == null)
+ 			{
+-				final double distance = npc.calculateDistance2D(adolph);
+-				if (distance > 300)
++				return;
++			}
++			
++			final double distance = npc.calculateDistance2D(adolph);
++			
++			// Mode Combat
++			// In combat with valid target: do not interrupt to follow Adolph
++			if (npc.isInCombat())
++			{
++				final WorldObject currentTarget = npc.getTarget();
++				if ((currentTarget != null) && (currentTarget instanceof Monster) && !((Monster) currentTarget).isDead())
+ 				{
+-					final Location loc = new Location(adolph.getX(), adolph.getY(), adolph.getZ() + 50);
+-					final Location randLoc = new Location(loc.getX() + getRandom(-100, 100), loc.getY() + getRandom(-100, 100), loc.getZ());
+-					if (distance > 600)
+-					{
+-						npc.teleToLocation(loc);
+-					}
+-					else
+-					{
+-						npc.setRunning();
+-					}
+-					
+-					addMoveToDesire(npc, randLoc, 23);
++					// Attacking normally - do nothing
++					return;
+ 				}
+-				else if (!npc.isInCombat() || (npc.getTarget() == null))
++				// Copy target
++				final WorldObject adolphTarget = adolph.getTarget();
++				if ((adolphTarget != null) && adolphTarget.isMonster())
+ 				{
+-					final WorldObject target = adolph.getTarget();
+-					if ((target != null) && target.isMonster())
++					final Monster monster = adolphTarget.asMonster();
++					if ((monster != null) && !monster.isDead() && !ArrayUtil.contains(KARTIA_FRIENDS, monster.getId()))
+ 					{
+-						final Monster monster = target.asMonster();
+-						if ((monster != null) && adolph.isInCombat() && !ArrayUtil.contains(KARTIA_FRIENDS, monster.getId()))
+-						{
+-							npc.setTarget(monster);
+-						}
++						npc.setTarget(monster);
++						addAttackDesire(npc, monster);
++					}
++				}
++				return;
++			}
++			
++			// Mode peace
++			// Follow Adolph on left flank
++			boolean shouldFollow = false;
++			if (distance > 600)
++			{
++				shouldFollow = true;
++			}
++			else if ((npc.getTarget() == null) && (distance > 150))
++			{
++				shouldFollow = true;
++			}
++			
++			if (shouldFollow)
++			{
++				final double angle = ((adolph.getHeading() / 65535.0) * 2 * Math.PI) - (Math.PI / 2);
++				final int distanceToTarget = 100;
++				final int newX = adolph.getX() + (int) (Math.cos(angle) * distanceToTarget);
++				final int newY = adolph.getY() + (int) (Math.sin(angle) * distanceToTarget);
++				final Location safeLoc = new Location(newX, newY, adolph.getZ());
++				
++				if (distance > 600)
++				{
++					npc.teleToLocation(safeLoc);
++				}
++				else if (npc.calculateDistance2D(safeLoc) > 50)
++				{
++					npc.setRunning();
++					npc.getAI().setIntentionActive();
++					addMoveToDesire(npc, safeLoc, 23);
++				}
++			}
++			else
++			{
++				final WorldObject target = adolph.getTarget();
++				if ((target != null) && target.isMonster())
++				{
++					final Monster monster = target.asMonster();
++					if ((monster != null) && !monster.isDead() && !ArrayUtil.contains(KARTIA_FRIENDS, monster.getId()))
++					{
++						npc.setTarget(monster);
++						addAttackDesire(npc, monster);
+ 					}
+ 				}
+@@ -140,8 +184,17 @@
+ 		if (status == 1)
+ 		{
++			final Npc adolph = instance.getNpcs().stream().filter(n -> ArrayUtil.contains(KARTIA_ADOLPH, n.getId())).findFirst().orElse(null);
++			if (adolph != null)
++			{
++				instance.getAliveNpcs(KARTIA_ELIYAH).forEach(eliyah -> eliyah.getVariables().set("ADOLPH_OBJECT", adolph));
++			}
+ 			instance.getAliveNpcs(KARTIA_ELIYAH).forEach(eliyah -> getTimers().addRepeatingTimer("CHECK_ACTION", 3000, eliyah, null));
+ 			if ((instance.getAliveNpcs(KARTIA_ELIYAH) != null) && !instance.getAliveNpcs(KARTIA_ELIYAH).isEmpty())
+ 			{
+-				instance.spawnGroup("GUARDIANS");
++				if (!instance.getParameters().getBoolean("GUARDIANS_SPAWNED", false))
++				{
++					instance.getParameters().set("GUARDIANS_SPAWNED", true);
++					instance.spawnGroup("GUARDIANS");
++				}
+ 			}
+ 		}
+@@ -167,7 +220,11 @@
+ 		{
+ 			final Instance instance = npc.getInstanceWorld();
+-			if ((instance != null) && !event.getAttacker().isPlayable() && !ArrayUtil.contains(KARTIA_FRIENDS, npc.getTargetId()))
++			if ((instance != null) && !event.getAttacker().isPlayable() && !ArrayUtil.contains(KARTIA_FRIENDS, event.getAttacker().getId()))
+ 			{
+-				npc.setTarget(event.getAttacker());
++				if (!npc.isInCombat())
++				{
++					npc.setTarget(event.getAttacker());
++					addAttackDesire(npc, event.getAttacker().asCreature());
++				}
+ 			}
+ 		}
+diff --git dist/game/data/scripts/instances/KartiasLabyrinth/KartiaHelperGuardian.java dist/game/data/scripts/instances/KartiasLabyrinth/KartiaHelperGuardian.java
+index 3a1ec80..9eb52ee 100644
+--- dist/game/data/scripts/instances/KartiasLabyrinth/KartiaHelperGuardian.java
++++ dist/game/data/scripts/instances/KartiasLabyrinth/KartiaHelperGuardian.java
+@@ -120,13 +120,5 @@
+ 					final Location loc = new Location(eliyah.getX(), eliyah.getY(), eliyah.getZ() + 50);
+ 					final Location randLoc = new Location(loc.getX() + getRandom(-50, 50), loc.getY() + getRandom(-50, 50), loc.getZ());
+-					if (distance > 600)
+-					{
+-						npc.teleToLocation(loc);
+-					}
+-					else
+-					{
+-						npc.setRunning();
+-					}
+-					
++					npc.setRunning();
+ 					addMoveToDesire(npc, randLoc, 23);
+ 				}
+diff --git dist/game/data/scripts/instances/KartiasLabyrinth/KartiaHelperHayuk.java dist/game/data/scripts/instances/KartiasLabyrinth/KartiaHelperHayuk.java
+index 8260f0f..38ff11e 100644
+--- dist/game/data/scripts/instances/KartiasLabyrinth/KartiaHelperHayuk.java
++++ dist/game/data/scripts/instances/KartiasLabyrinth/KartiaHelperHayuk.java
+@@ -41,16 +41,10 @@
+ 
+ /**
+- * Kartia Helper Hayuk AI. Archer
+- * @author flanagak
++ * Kartia Helper Hayuk AI. Archer - Refactored for Retail mechanics (06/2026)
++ * @author flanagak, Notorion
+  */
+ public class KartiaHelperHayuk extends Script
+ {
+ 	// NPCs
+-	private static final int[] KARTIA_ADOLPH =
+-	{
+-		33609, // Adolph (Kartia 85)
+-		33620, // Adolph (Kartia 90)
+-		33631, // Adolph (Kartia 95)
+-	};
+ 	private static final int[] KARTIA_HAYUK =
+ 	{
+@@ -59,9 +53,12 @@
+ 		33635, // Hayuk (Kartia 95)
+ 	};
++	private static final int[] KARTIA_ADOLPH =
++	{
++		33609, // Adolph (Kartia 85)
++		33620, // Adolph (Kartia 90)
++		33631, // Adolph (Kartia 95)
++	};
+ 	private static final int[] KARTIA_FRIENDS =
+ 	{
+-		33617, // Elise (Kartia 85)
+-		33628, // Elise (Kartia 90)
+-		33639, // Elise (Kartia 95)
+ 		33609, // Adolph (Kartia 85)
+ 		33620, // Adolph (Kartia 90)
+@@ -70,4 +67,7 @@
+ 		33622, // Barton (Kartia 90)
+ 		33633, // Barton (Kartia 95)
++		33617, // Elise (Kartia 85)
++		33628, // Elise (Kartia 90)
++		33639, // Elise (Kartia 95)
+ 		33615, // Eliyah (Kartia 85)
+ 		33626, // Eliyah (Kartia 90)
+@@ -81,4 +81,7 @@
+ 	};
+ 	
++	// Archer: minimum attack range
++	private static final int ARCHER_ATTACK_RANGE = 220;
++	
+ 	// Misc
+ 	private static final int[] KARTIA_SOLO_INSTANCES =
+@@ -104,30 +107,107 @@
+ 		{
+ 			final FriendlyNpc adolph = npc.getVariables().getObject("ADOLPH_OBJECT", FriendlyNpc.class);
+-			if (adolph != null)
++			if (adolph == null)
+ 			{
+-				final double distance = npc.calculateDistance2D(adolph);
+-				if (distance > 300)
++				return;
++			}
++			final double distance = npc.calculateDistance3D(adolph);
++			
++			// Hard leash: Hayuk must not be farther than 500 from Adolph
++			if (distance > 500)
++			{
++				final double angle = ((adolph.getHeading() / 65535.0) * 2 * Math.PI) + (Math.PI / 2);
++				final int distanceToTarget = 100;
++				final int newX = adolph.getX() + (int) (Math.cos(angle) * distanceToTarget);
++				final int newY = adolph.getY() + (int) (Math.sin(angle) * distanceToTarget);
++				final Location safeLoc = new Location(newX, newY, adolph.getZ());
++				npc.abortAttack();
++				npc.abortCast();
++				npc.setTarget(null);
++				npc.teleToLocation(safeLoc);
++				return;
++			}
++			
++			// Mode Combat
++			// Archer behavior: do not interrupt combat to follow Adolph
++			if (npc.isInCombat())
++			{
++				final WorldObject currentTarget = npc.getTarget();
++				if ((currentTarget != null) && (currentTarget instanceof Monster) && !((Monster) currentTarget).isDead())
+ 				{
+-					final Location loc = new Location(adolph.getX(), adolph.getY(), adolph.getZ() + 50);
+-					final Location randLoc = new Location(loc.getX() + getRandom(-100, 100), loc.getY() + getRandom(-100, 100), loc.getZ());
+-					if (distance > 600)
++					// If target monster has drifted more than 500 from Adolph, break off
++					if (currentTarget.calculateDistance3D(adolph) > 500)
+ 					{
+-						npc.teleToLocation(loc);
++						npc.abortAttack();
++						npc.abortCast();
++						npc.setTarget(null);
++						return;
+ 					}
+-					else
+-					{
+-						npc.setRunning();
+-					}
+-					
+-					addMoveToDesire(npc, randLoc, 23);
++					// Attacking normally.
++					// Do not approach - stay in position and use ranged skills.
++					return;
+ 				}
+-				else if (!npc.isInCombat() || (npc.getTarget() == null))
++				// Copy Target
++				final WorldObject adolphTarget = adolph.getTarget();
++				if ((adolphTarget != null) && adolphTarget.isMonster())
+ 				{
+-					final WorldObject target = adolph.getTarget();
+-					if ((target != null) && target.isMonster())
++					final Monster monster = adolphTarget.asMonster();
++					if ((monster != null) && !monster.isDead() && !ArrayUtil.contains(KARTIA_FRIENDS, monster.getId()) && (monster.calculateDistance3D(adolph) <= 500))
+ 					{
+-						final Monster monster = target.asMonster();
+-						if ((monster != null) && adolph.isInCombat() && !ArrayUtil.contains(KARTIA_FRIENDS, monster.getId()))
++						// Ranged attack: do not approach target
++						final double distToMonster = npc.calculateDistance2D(monster);
++						if (distToMonster <= ARCHER_ATTACK_RANGE)
+ 						{
++							npc.setTarget(monster);
++							addAttackDesire(npc, monster);
++						}
++					}
++				}
++				return;
++			}
++			
++			// Mode Peace
++			// Follow Adolph in rearguard position
++			boolean shouldFollow = false;
++			if (distance > 500)
++			{
++				shouldFollow = true;
++			}
++			else if ((npc.getTarget() == null) && (distance > 150))
++			{
++				shouldFollow = true;
++			}
++			
++			if (shouldFollow)
++			{
++				// Right Flank (alongside Adolph)
++				final double angle = ((adolph.getHeading() / 65535.0) * 2 * Math.PI) + (Math.PI / 2); // Right Flank
++				final int distanceToTarget = 100;
++				final int newX = adolph.getX() + (int) (Math.cos(angle) * distanceToTarget);
++				final int newY = adolph.getY() + (int) (Math.sin(angle) * distanceToTarget);
++				final Location safeLoc = new Location(newX, newY, adolph.getZ());
++				
++				if (distance > 500)
++				{
++					npc.teleToLocation(safeLoc);
++				}
++				else if (npc.calculateDistance2D(safeLoc) > 50)
++				{
++					npc.setRunning();
++					npc.getAI().setIntentionActive();
++					addMoveToDesire(npc, safeLoc, 23);
++				}
++			}
++			else
++			{
++				final WorldObject target = adolph.getTarget();
++				if ((target != null) && target.isMonster())
++				{
++					final Monster monster = target.asMonster();
++					if ((monster != null) && !monster.isDead() && !ArrayUtil.contains(KARTIA_FRIENDS, monster.getId()))
++					{
++						final double distToMonster = npc.calculateDistance2D(monster);
++						if (distToMonster <= ARCHER_ATTACK_RANGE)
++						{
++							npc.setTarget(monster);
+ 							addAttackDesire(npc, monster);
+ 						}
+@@ -154,5 +234,10 @@
+ 		if (status == 1)
+ 		{
+-			instance.getAliveNpcs(KARTIA_HAYUK).forEach(hayuk -> getTimers().addRepeatingTimer("CHECK_ACTION", 3000, hayuk, null));
++			final Npc adolph = instance.getNpcs().stream().filter(n -> ArrayUtil.contains(KARTIA_ADOLPH, n.getId())).findFirst().orElse(null);
++			if (adolph != null)
++			{
++				instance.getAliveNpcs(KARTIA_HAYUK).forEach(hayuk -> hayuk.getVariables().set("ADOLPH_OBJECT", adolph));
++			}
++			instance.getAliveNpcs(KARTIA_HAYUK).forEach(hayuk -> getTimers().addRepeatingTimer("CHECK_ACTION", 1000, hayuk, null));
+ 			instance.getAliveNpcs(KARTIA_HAYUK).forEach(hayuk -> getTimers().addRepeatingTimer("USE_SKILL", 6000, hayuk, null));
+ 		}
+@@ -232,6 +317,17 @@
+ 			if ((instance != null) && !npc.isInCombat() && !event.getAttacker().isPlayable() && !ArrayUtil.contains(KARTIA_FRIENDS, event.getAttacker().getId()))
+ 			{
+-				npc.setTarget(event.getAttacker());
+-				addAttackDesire(npc, npc.getTarget().asCreature());
++				final FriendlyNpc adolph = npc.getVariables().getObject("ADOLPH_OBJECT", FriendlyNpc.class);
++				if ((adolph != null) && (event.getAttacker().calculateDistance3D(adolph) > 500))
++				{
++					return;
++				}
++				
++				// Counter-attack only if attacker is within bow range
++				final double distToAttacker = npc.calculateDistance2D(event.getAttacker());
++				if (distToAttacker <= ARCHER_ATTACK_RANGE)
++				{
++					npc.setTarget(event.getAttacker());
++					addAttackDesire(npc, npc.getTarget().asCreature());
++				}
+ 			}
+ 		}
+diff --git dist/game/data/scripts/instances/KartiasLabyrinth/KartiasLabyrinth.java dist/game/data/scripts/instances/KartiasLabyrinth/KartiasLabyrinth.java
+index d899877..887e5e3 100644
+--- dist/game/data/scripts/instances/KartiasLabyrinth/KartiasLabyrinth.java
++++ dist/game/data/scripts/instances/KartiasLabyrinth/KartiasLabyrinth.java
+@@ -41,6 +41,7 @@
+ 
+ /**
+- * Kartia Labyrinth instance zone.
++ * Kartia Labyrinth instance zone - Refactored for Retail mechanics (06/2026)
+  * @author flanagak
++ * @author Notorion
+  */
+ public class KartiasLabyrinth extends InstanceScript
+@@ -67,4 +68,23 @@
+ 		33638,
+ 	};
++	
++	private static final int[] COMBAT_HELPERS =
++	{
++		33609,
++		33620,
++		33631, // Adolph
++		33611,
++		33622,
++		33633, // Barton
++		33613,
++		33624,
++		33635, // Hayuk
++		33615,
++		33626,
++		33637, // Eliyah
++		33617,
++		33628,
++		33639, // Elise
++	};
+ 	private static final int[] ELIYAH =
+ 	{
+@@ -135,4 +155,5 @@
+ 	private static final SkillHolder MIRROR_SKILL_2 = new SkillHolder(14065, 1);
+ 	private static final SkillHolder BOSS_STONE = new SkillHolder(15155, 1);
++	private static final SkillHolder DIMENSIONAL_POISON = new SkillHolder(15010, 1);
+ 	private static final SkillHolder PRISONER_HOLD = new SkillHolder(14988, 1);
+ 	private static final SkillHolder PRISONER_CLEANSE = new SkillHolder(14992, 1);
+@@ -145,4 +166,7 @@
+ 	private static final int KARTIA_95_DETECT_1 = 12030;
+ 	private static final int KARTIA_95_DETECT_2 = 12031;
++	private static final int KARTIA_85_TELEPORT_1 = 12022;
++	private static final int KARTIA_90_TELEPORT_1 = 12027;
++	private static final int KARTIA_95_TELEPORT_1 = 12032;
+ 	
+ 	// Misc
+@@ -192,9 +216,13 @@
+ 		addRouteFinishedId(MONSTERS);
+ 		addCreatureSeeId(MONSTERS);
++		addCreatureSeeId(MINI_BOSSES);
+ 		addEnterZoneId(KARTIA_85_DETECT_1, KARTIA_85_DETECT_2);
+ 		addEnterZoneId(KARTIA_90_DETECT_1, KARTIA_90_DETECT_2);
+ 		addEnterZoneId(KARTIA_95_DETECT_1, KARTIA_95_DETECT_2);
++		addEnterZoneId(KARTIA_85_TELEPORT_1, KARTIA_90_TELEPORT_1, KARTIA_95_TELEPORT_1);
+ 		addInstanceCreatedId(TEMPLATE_ID_SOLO_85, TEMPLATE_ID_SOLO_90, TEMPLATE_ID_SOLO_95, TEMPLATE_ID_GROUP_85, TEMPLATE_ID_GROUP_90, TEMPLATE_ID_GROUP_95);
+ 		setCreatureKillId(this::onCreatureKill, MONSTERS);
++		setCreatureKillId(this::onCreatureKill, MIRRORS);
++		setCreatureKillId(this::onCreatureKill, MINI_BOSSES);
+ 		setCreatureKillId(this::onBossKill, BOSSES);
+ 	}
+@@ -262,6 +290,11 @@
+ 							{
+ 								npc.setScriptValue(1);
++								// Open door
+ 								instance.openCloseDoor(instance.getTemplateParameters().getInt("firstDoorId"), true);
+-								instance.spawnGroup("HELPERS").stream().filter(n -> n.getId() == instance.getTemplateParameters().getInt(event.replace("send", "helper"))).forEach(Npc::deleteMe);
++								
++								final java.util.List<Npc> helpers = instance.spawnGroup("HELPERS");
++								helpers.stream().filter(n -> n.getId() == instance.getTemplateParameters().getInt(event.replace("send", "helper"))).forEach(Npc::deleteMe);
++								
++								instance.setStatus(1);
+ 								getTimers().addTimer("TELEPORT_PLAYER", 3000, npc, player);
+ 								return "adolph-04.html";
+@@ -295,4 +328,15 @@
+ 					break;
+ 				}
++				case "TELEPORT_HELPERS_ROOM_2":
++				{
++					if (npc != null)
++					{
++						npc.setImmobilized(false);
++						npc.disableCoreAI(false);
++						npc.teleToLocation(instance.getTemplateParameters().getLocation("teleportZone2_loc"));
++						npc.getAI().setIntentionActive();
++					}
++					break;
++				}
+ 				case "MOVE_TO_MIDDLE":
+ 				{
+@@ -308,4 +352,14 @@
+ 							getTimers().addTimer("START_MOVE", 12000, npc, null);
+ 						}
++						else if (npc.getInstanceWorld().getParameters().getInt("ROOM", 1) == 2)
++						{
++							final Location loc = instance.getTemplateParameters().getLocation("teleportZone2_loc");
++							if (loc != null)
++							{
++								final Location moveTo = new Location(loc.getX() + getRandom(-100, 100), loc.getY() + getRandom(-100, 100), loc.getZ());
++								npc.setRunning();
++								addMoveToDesire(npc, moveTo, 23);
++							}
++						}
+ 						else if (npc.getInstanceWorld().getParameters().getInt("ROOM", 1) == 3)
+ 						{
+@@ -328,12 +382,5 @@
+ 					break;
+ 				}
+-				case "START_3RD_ROOM":
+-				{
+-					instance.openCloseDoor(instance.getTemplateParameters().getInt("thirdDoorId"), false);
+-					instance.getAliveNpcs(MONSTERS).forEach(n -> n.doDie(null));
+-					getTimers().addTimer("CALL_PROGRESS", 1000, n -> manageProgressInInstance(instance));
+-					instance.getParameters().set("TELEPORT_3_ENABLED", true);
+-					break;
+-				}
++				
+ 				case "MIRROR_DESPAWN":
+ 				{
+@@ -346,4 +393,19 @@
+ 	}
+ 	
++	private void applyPoison(Instance instance)
++	{
++		if ((instance != null) && instance.getParameters().getBoolean("CONTINUE_AFTER_KILL", false))
++		{
++			for (Player p : instance.getPlayers())
++			{
++				if ((p != null) && !p.isDead() && (DIMENSIONAL_POISON.getSkill() != null))
++				{
++					DIMENSIONAL_POISON.getSkill().applyEffects(p, p);
++				}
++			}
++			getTimers().addTimer("APPLY_POISON", 2000, n -> applyPoison(instance));
++		}
++	}
++	
+ 	@Override
+ 	public void onInstanceCreated(Instance instance, Player player)
+@@ -369,14 +431,59 @@
+ 		{
+ 			final StatSet param = instance.getParameters();
+-			if (param.getBoolean("BOSS_KILL_OPEN_DOOR", false) && ArrayUtil.contains(MINI_BOSSES, npc.getId()))
++			if (ArrayUtil.contains(MINI_BOSSES, npc.getId()) && param.getBoolean("BOSS_KILL_OPEN_DOOR", false))
+ 			{
+-				instance.setParameter("BOSS_KILL_OPEN_DOOR", true);
++				instance.setParameter("BOSS_KILL_OPEN_DOOR", false);
+ 				instance.openCloseDoor(instance.getTemplateParameters().getInt("thirdDoorId"), true);
+-				instance.setStatus(3); // Used for notify helper's AI
++				instance.setStatus(3);
++				getTimers().addTimer("START_3RD_ROOM_15S", 15000, n ->
++				{
++					instance.openCloseDoor(instance.getTemplateParameters().getInt("thirdDoorId"), false);
++					checkStragglers(instance);
++					instance.getParameters().set("ROOM", 3);
++					instance.getParameters().set("STAGE", 1);
++					instance.getParameters().set("WAVE", 1);
++					instance.getAliveNpcs(MONSTERS).forEach(m -> m.doDie(null));
++					getTimers().addTimer("CALL_PROGRESS", 1000, y -> manageProgressInInstance(instance));
++					instance.getParameters().set("TELEPORT_3_ENABLED", true);
++				});
+ 			}
+-			else if (param.getBoolean("CONTINUE_AFTER_KILL", false) && (instance.getAliveNpcCount(MINI_BOSSES) == 0))
++			else if (ArrayUtil.contains(MINI_BOSSES, npc.getId()) && param.getBoolean("CONTINUE_AFTER_KILL", false))
+ 			{
+ 				param.set("CONTINUE_AFTER_KILL", false);
+-				getTimers().addTimer("CALL_PROGRESS", 5000, n -> manageProgressInInstance(instance));
++				getTimers().cancelTimers("NEXT_WAVE_DELAY");
++				getTimers().cancelTimers("MONITOR_WAVE");
++				getTimers().cancelTimers("APPLY_POISON");
++				getTimers().cancelTimers("CALL_PROGRESS");
++				
++				for (Player p : instance.getPlayers())
++				{
++					if (p != null)
++					{
++						p.stopSkillEffects(DIMENSIONAL_POISON.getSkill());
++					}
++				}
++				
++				getTimers().addTimer("PRISONERS_ESCAPE", 2000, n -> instance.getAliveNpcs(PRISONERS).forEach(prisoner ->
++				{
++					param.set("SURVIVOR_COUNT", param.getInt("SURVIVOR_COUNT", 0) + 1);
++					prisoner.broadcastSay(ChatType.NPC_SHOUT, NpcStringId.I_AM_SAFE_THANKS_TO_YOU_I_WILL_BEGIN_SUPPORTING_AS_SOON_AS_PREPARATIONS_ARE_COMPLETE);
++					prisoner.setTargetable(false);
++					PRISONER_CLEANSE.getSkill().applyEffects(prisoner, prisoner);
++					final Location loc = instance.getTemplateParameters().getLocation("prisonerEscapeLoc");
++					addMoveToDesire(prisoner, loc, 23);
++					getTimers().addTimer("PRISONERS_DESPAWN", 10000, prisoner, null);
++				}));
++				
++				instance.getAliveNpcs(BOZ_ENERGY).forEach(Npc::deleteMe);
++				getTimers().addTimer("CALL_PROGRESS", 3000, n -> manageProgressInInstance(instance));
++			}
++			else if (ArrayUtil.contains(MIRRORS, npc.getId()))
++			{
++				if (!instance.getParameters().getBoolean("MIRROR_DEAD", false))
++				{
++					instance.getParameters().set("MIRROR_DEAD", true);
++					manageProgressInInstance(instance);
++					getTimers().cancelTimer("MIRROR_DESPAWN", npc, null);
++				}
+ 			}
+ 		}
+@@ -389,4 +496,5 @@
+ 			getTimers().cancelTimers("NEXT_WAVE_DELAY");
+ 			getTimers().cancelTimers("MONITOR_WAVE");
++			getTimers().cancelTimers("CALL_PROGRESS");
+ 			getTimers().addTimer("CALL_PROGRESS", 5000, n -> manageProgressInInstance(instance));
+ 		}
+@@ -441,5 +549,17 @@
+ 			if (ArrayUtil.contains(MINI_BOSSES, npc.getId()))
+ 			{
+-				if (npc.isScriptValue(0) && (npc.getCurrentHpPercent() < 50) && instance.getParameters().getBoolean("BOSS_CAN_ESCAPE", false))
++				final Location pointA = getPointA(instance.getTemplateId());
++				
++				if ((npc.isScriptValue(0) || npc.isScriptValue(1)) && instance.getParameters().getBoolean("BOSS_KILL_OPEN_DOOR", false) && (npc.getCurrentHpPercent() < 15))
++				{
++					npc.setScriptValue(2);
++					instance.openCloseDoor(instance.getTemplateParameters().getInt("thirdDoorId"), true);
++					npc.asAttackable().setCanReturnToSpawnPoint(false);
++					
++					npc.broadcastSay(ChatType.NPC_SHOUT, NpcStringId.NOT_BAD_FOR_A_BUNCH_OF_HUMANS_I_M_LEAVING);
++					
++					enforceWatchmanLeash(npc, pointA, 2);
++				}
++				else if (npc.isScriptValue(0) && (npc.getCurrentHpPercent() < 50) && instance.getParameters().getBoolean("BOSS_CAN_ESCAPE", false))
+ 				{
+ 					instance.setParameter("BOSS_CAN_ESCAPE", false);
+@@ -454,4 +574,5 @@
+ 				{
+ 					npc.setScriptValue(1);
++					instance.getParameters().set("MIRROR_DEAD", true);
+ 					showOnScreenMsg(instance, NpcStringId.BURNING_BLOOD_S_EFFECT_IS_FELT, ExShowScreenMessage.TOP_CENTER, 5000, true);
+ 					MIRROR_SKILL_1.getSkill().applyEffects(attacker, attacker);
+@@ -473,4 +594,14 @@
+ 			switch (zone.getId())
+ 			{
++				case KARTIA_85_TELEPORT_1:
++				case KARTIA_90_TELEPORT_1:
++				case KARTIA_95_TELEPORT_1:
++				{
++					if (!instance.getParameters().getBoolean("MIRROR_DEAD", false))
++					{
++						creature.teleToLocation(instance.getTemplateParameters().getLocation("teleportZone1_loc"), instance);
++					}
++					break;
++				}
+ 				case KARTIA_85_DETECT_1:
+ 				case KARTIA_90_DETECT_1:
+@@ -507,15 +638,59 @@
+ 	{
+ 		final Instance instance = npc.getInstanceWorld();
+-		if ((instance != null) && ArrayUtil.contains(PRISONERS, npc.getId()))
++		if (instance != null)
+ 		{
+-			if (npc.isScriptValue(0))
++			if (ArrayUtil.contains(PRISONERS, npc.getId()))
+ 			{
+-				npc.setScriptValue(1);
+-				final Location moveTo = new Location(npc.getX() + getRandom(-200, 200), npc.getY() + getRandom(-200, 200), npc.getZ());
+-				addMoveToDesire(npc, moveTo, 23);
++				if (npc.isScriptValue(0))
++				{
++					npc.setScriptValue(1);
++					final Location moveTo = new Location(npc.getX() + getRandom(-200, 200), npc.getY() + getRandom(-200, 200), npc.getZ());
++					addMoveToDesire(npc, moveTo, 23);
++				}
++				else
++				{
++					npc.deleteMe();
++				}
+ 			}
+-			else
++			else if (ArrayUtil.contains(MINI_BOSSES, npc.getId()) && instance.getParameters().getBoolean("BOSS_KILL_OPEN_DOOR", false))
+ 			{
+-				npc.deleteMe();
++				final Location pointA = getPointA(instance.getTemplateId());
++				final Location pointB = getPointB(instance.getTemplateId());
++				
++				if (npc.isScriptValue(2) && (npc.calculateDistance2D(pointA) < 150))
++				{
++					npc.setScriptValue(3);
++					enforceWatchmanLeash(npc, pointB, 3);
++				}
++				else if (npc.isScriptValue(3) && (npc.calculateDistance2D(pointB) < 150))
++				{
++					npc.setScriptValue(4);
++					instance.getParameters().set("WATCHMAN_ESCAPED", true);
++					
++					for (Npc nearby : instance.getNpcs())
++					{
++						if ((nearby != npc) && (nearby.calculateDistance2D(npc) < 400) && ArrayUtil.contains(MONSTERS, nearby.getId()))
++						{
++							nearby.deleteMe();
++						}
++					}
++					
++					getTimers().addTimer("WATCHMAN_DISAPPEAR", 2000, n ->
++					{
++						npc.deleteMe();
++						instance.setParameter("BOSS_KILL_OPEN_DOOR", false);
++						getTimers().addTimer("START_3RD_ROOM_15S", 15000, n2 ->
++						{
++							instance.openCloseDoor(instance.getTemplateParameters().getInt("thirdDoorId"), false);
++							checkStragglers(instance);
++							instance.getParameters().set("ROOM", 3);
++							instance.getParameters().set("STAGE", 1);
++							instance.getParameters().set("WAVE", 1);
++							instance.getAliveNpcs(MONSTERS).forEach(m -> m.doDie(null));
++							getTimers().addTimer("CALL_PROGRESS", 1000, y -> manageProgressInInstance(instance));
++							instance.getParameters().set("TELEPORT_3_ENABLED", true);
++						});
++					});
++				}
+ 			}
+ 		}
+@@ -664,21 +839,17 @@
+ 							{
+ 								param.set("WAVE", 4);
+-								getTimers().addTimer("PRISONERS_ESCAPE", 5000, n -> instance.getAliveNpcs(PRISONERS).forEach(prisoner ->
+-								{
+-									param.set("SURVIVOR_COUNT", param.getInt("SURVIVOR_COUNT", 0) + 1);
+-									prisoner.broadcastSay(ChatType.NPC_SHOUT, NpcStringId.I_AM_SAFE_THANKS_TO_YOU_I_WILL_BEGIN_SUPPORTING_AS_SOON_AS_PREPARATIONS_ARE_COMPLETE);
+-									prisoner.setTargetable(false);
+-									PRISONER_CLEANSE.getSkill().applyEffects(prisoner, prisoner);
+-									final Location loc = instance.getTemplateParameters().getLocation("prisonerEscapeLoc");
+-									addMoveToDesire(prisoner, loc, 23);
+-								}));
++								param.set("CONTINUE_AFTER_KILL", true);
++								getTimers().addTimer("APPLY_POISON", 2000, n -> applyPoison(instance));
++								getTimers().cancelTimers("NEXT_WAVE_DELAY");
++								getTimers().cancelTimers("MONITOR_WAVE");
+ 							}
+ 							else
+ 							{
+-								param.set("STAGE", 4);
+ 								param.set("WAVE", 1);
++								param.set("STAGE", 4);
++								getTimers().cancelTimers("NEXT_WAVE_DELAY");
++								getTimers().cancelTimers("MONITOR_WAVE");
++								getTimers().addTimer("CALL_PROGRESS", 8000, n -> manageProgressInInstance(instance));
+ 							}
+-							
+-							getTimers().addTimer("CALL_PROGRESS", 8000, n -> manageProgressInInstance(instance));
+ 							break;
+ 						}
+@@ -688,5 +859,9 @@
+ 							instance.spawnGroup("ROOM1_STAGE3_WAVE4");
+ 							instance.getAliveNpcs(BOZ_ENERGY).forEach(Npc::deleteMe);
+-							instance.getAliveNpcs(MIRRORS).forEach(npc -> getTimers().addTimer("MIRROR_DESPAWN", 180000, npc, null));
++							getTimers().cancelTimers("MONITOR_WAVE");
++							getTimers().cancelTimers("NEXT_WAVE_DELAY");
++							getTimers().cancelTimers("CALL_PROGRESS");
++							
++							instance.getAliveNpcs(MIRRORS).forEach(n -> getTimers().addTimer("MIRROR_DESPAWN", 180000, n, null));
+ 							param.set("ROOM", 2);
+ 							param.set("STAGE", 1);
+@@ -723,4 +898,6 @@
+ 							param.set("WAVE", 1);
+ 							param.set("STAGE", 5);
++							getTimers().cancelTimers("NEXT_WAVE_DELAY");
++							getTimers().cancelTimers("MONITOR_WAVE");
+ 							getTimers().addTimer("CALL_PROGRESS", 8000, n -> manageProgressInInstance(instance));
+ 							break;
+@@ -745,17 +922,52 @@
+ 						{
+ 							moveMonsters(instance.spawnGroup("ROOM1_STAGE5_WAVE2"));
++							param.set("WAVE", 3);
++							param.set("CONTINUE_AFTER_KILL", true);
++							getTimers().addTimer("APPLY_POISON", 2000, n -> applyPoison(instance));
++							getTimers().cancelTimers("NEXT_WAVE_DELAY");
++							getTimers().cancelTimers("MONITOR_WAVE");
++							break;
++						}
++						case 3:
++						{
++							showOnScreenMsg(instance, NpcStringId.THE_LIFE_PLUNDERER_S_TRUE_FORM_IS_REVEALED, ExShowScreenMessage.TOP_CENTER, 5000, true);
++							List<Npc> spawnedMirrors = instance.spawnGroup("ROOM1_STAGE5_WAVE3");
++							
++							if ((spawnedMirrors == null) || spawnedMirrors.isEmpty())
++							{
++								if (spawnedMirrors == null)
++								{
++									spawnedMirrors = new java.util.ArrayList<>();
++								}
++								int mirrorId = MIRRORS[instance.getTemplateId() - 208];
++								Npc manualMirror = null;
++								switch (instance.getTemplateId())
++								{
++									case 208:
++										manualMirror = addSpawn(mirrorId, -110638, 22046, -10808, 32767, false, 0, false, instance.getId());
++										break;
++									case 209:
++										manualMirror = addSpawn(mirrorId, -119895, -10455, -11920, 21833, false, 0, false, instance.getId());
++										break;
++									case 210:
++										manualMirror = addSpawn(mirrorId, -110311, -10438, -11920, 27292, false, 0, false, instance.getId());
++										break;
++								}
++								if (manualMirror != null)
++								{
++									spawnedMirrors.add(manualMirror);
++								}
++							}
++							
++							moveMonsters(spawnedMirrors);
++							instance.getAliveNpcs(BOZ_ENERGY).forEach(Npc::deleteMe);
++							getTimers().cancelTimers("MONITOR_WAVE");
++							getTimers().cancelTimers("NEXT_WAVE_DELAY");
++							getTimers().cancelTimers("CALL_PROGRESS");
++							
++							instance.getAliveNpcs(MIRRORS).forEach(n -> getTimers().addTimer("MIRROR_DESPAWN", 180000, n, null));
+ 							param.set("ROOM", 2);
+ 							param.set("STAGE", 1);
+ 							param.set("WAVE", 1);
+-							param.set("CONTINUE_AFTER_KILL", true);
+-							getTimers().addTimer("PRISONERS_ESCAPE", 5000, n -> instance.getAliveNpcs(PRISONERS).forEach(prisoner ->
+-							{
+-								param.set("SURVIVOR_COUNT", param.getInt("SURVIVOR_COUNT", 0) + 1);
+-								prisoner.broadcastSay(ChatType.NPC_SHOUT, NpcStringId.I_AM_SAFE_THANKS_TO_YOU_I_WILL_BEGIN_SUPPORTING_AS_SOON_AS_PREPARATIONS_ARE_COMPLETE);
+-								prisoner.setTargetable(false);
+-								PRISONER_CLEANSE.getSkill().applyEffects(prisoner, prisoner);
+-								final Location loc = instance.getTemplateParameters().getLocation("prisonerEscapeLoc");
+-								addMoveToDesire(prisoner, loc, 23);
+-							}));
+ 							break;
+ 						}
+@@ -767,4 +979,13 @@
+ 		else if (room == 2)
+ 		{
++			// Guard: prevent double spawn if called twice before ROOM advances
++			if (instance.getParameters().getBoolean("ROOM2_STARTED", false))
++			{
++				return;
++			}
++			instance.setParameter("ROOM2_STARTED", true);
++			param.set("ROOM", 2);
++			param.set("STAGE", 1);
++			param.set("WAVE", 1);
+ 			instance.setParameter("BOSS_CAN_ESCAPE", false);
+ 			instance.setParameter("BOSS_KILL_OPEN_DOOR", true);
+@@ -773,7 +994,18 @@
+ 			instance.setStatus(2); // Used for notify helper's AI
+ 			instance.getAliveNpcs(BOZ_ENERGY).forEach(npc -> npc.deleteMe());
+-			param.set("ROOM", 3);
+-			param.set("STAGE", 1);
+-			param.set("WAVE", 1);
++			
++			final java.util.List<Npc> helpers = new java.util.ArrayList<>();
++			helpers.addAll(instance.getAliveNpcs(COMBAT_HELPERS));
++			
++			for (Npc helper : helpers)
++			{
++				helper.abortAttack();
++				helper.abortCast();
++				helper.setTarget(null);
++				helper.getAI().setIntentionIdle();
++				helper.setImmobilized(true);
++				helper.disableCoreAI(true);
++				getTimers().addTimer("TELEPORT_HELPERS_ROOM_2", 8000, helper, null);
++			}
+ 		}
+ 		else if (room == 3)
+@@ -789,5 +1021,5 @@
+ 					
+ 					final Location survivorLoc = instance.getTemplateParameters().getLocation("middlePointRoom3");
+-					final int survivorCount = param.getInt("SURVIVOR_COUNT");
++					final int survivorCount = param.getInt("SURVIVOR_COUNT", 0);
+ 					for (int i = 0; i < survivorCount; i++)
+ 					{
+@@ -812,9 +1044,17 @@
+ 					if (isSoloKartia(instance))
+ 					{
++						instance.getAliveNpcs(BOSSES).forEach(b -> b.stopSkillEffects(BOSS_STONE.getSkill()));
++						instance.getAliveNpcs(BOSSES).forEach(b -> b.setTargetable(true));
++						instance.getAliveNpcs(BOSSES).forEach(b -> b.setInvul(false));
++						
++						if (param.getBoolean("WATCHMAN_ESCAPED", false))
++						{
++							param.set("WATCHMAN_ESCAPED", false); // prevent multiple spawns
++							int watchmanId = isSoloKartia(instance) ? 19228 : (instance.getTemplateId() == 208 ? 19231 : (instance.getTemplateId() == 209 ? 19234 : 19237));
++							spawnRoom3Watchman(instance, watchmanId);
++						}
++						
+ 						instance.getAliveNpcs(BOSSES).forEach(npc ->
+ 						{
+-							npc.stopSkillEffects(BOSS_STONE.getSkill());
+-							npc.setTargetable(true);
+-							npc.setInvul(false);
+ 							final Location loc = instance.getTemplateParameters().getLocation("middlePointRoom3");
+ 							final Location moveTo = new Location(loc.getX() + getRandom(-200, 200), loc.getY() + getRandom(-200, 200), loc.getZ());
+@@ -841,4 +1081,12 @@
+ 					showOnScreenMsg(instance, NpcStringId.STAGE_S1, ExShowScreenMessage.TOP_CENTER, 5000, true, Integer.toString(stage));
+ 					moveMonsters(instance.spawnGroup("ROOM3_STAGE4_WAVE1"));
++					
++					if (instance.getParameters().getBoolean("WATCHMAN_ESCAPED", false))
++					{
++						instance.getParameters().set("WATCHMAN_ESCAPED", false);
++						int watchmanId = isSoloKartia(instance) ? 19228 : (instance.getTemplateId() == 208 ? 19231 : (instance.getTemplateId() == 209 ? 19234 : 19237));
++						spawnRoom3Watchman(instance, watchmanId);
++					}
++					
+ 					instance.getAliveNpcs(BOSSES).forEach(npc ->
+ 					{
+@@ -857,4 +1105,22 @@
+ 	}
+ 	
++	private void checkStragglers(Instance instance)
++	{
++		if (instance != null)
++		{
++			int minX = -111384;
++			int maxX = -111160;
++			int minY = -13928;
++			int maxY = -13544;
++			for (Player p : instance.getPlayers())
++			{
++				if ((p != null) && (p.getX() >= minX) && (p.getX() <= maxX) && (p.getY() >= minY) && (p.getY() <= maxY))
++				{
++					p.teleToLocation(new Location(-111315, -14404, -11424));
++				}
++			}
++		}
++	}
++	
+ 	private void moveMonsters(List<Npc> monsterList)
+ 	{
+@@ -885,5 +1151,5 @@
+ 	{
+ 		final Instance world = npc.getInstanceWorld();
+-		if ((world != null) && (creature.isPlayer() || creature.getInstanceType().isType(InstanceType.FriendlyNpc)) && npc.isScriptValue(1))
++		if ((world != null) && (creature.isPlayer() || creature.getInstanceType().isType(InstanceType.FriendlyNpc)) && npc.isScriptValue(0))
+ 		{
+ 			final double distance = npc.calculateDistance2D(creature);
+@@ -937,4 +1203,96 @@
+ 	}
+ 	
++	private void enforceWatchmanLeash(Npc npc, Location dest, int expectedState)
++	{
++		if ((npc != null) && npc.isSpawned() && !npc.isDead() && npc.isScriptValue(expectedState))
++		{
++			if (npc.calculateDistance2D(dest) < 150)
++			{
++				return;
++			}
++			
++			final Instance instance = npc.getInstanceWorld();
++			
++			npc.abortAttack();
++			npc.abortCast();
++			npc.setTarget(null);
++			
++			npc.asAttackable().clearAggroList();
++			
++			npc.getAI().setIntentionMoveTo(dest);
++			
++			if ((instance != null) && isSoloKartia(instance))
++			{
++				npc.setWalking();
++			}
++			else
++			{
++				npc.setRunning();
++			}
++			
++			addMoveToDesire(npc, dest, 99999999);
++			
++			getTimers().addTimer("WATCHMAN_LEASH", 500, n -> enforceWatchmanLeash(npc, dest, expectedState));
++		}
++	}
++	
++	private void spawnRoom3Watchman(Instance instance, int watchmanId)
++	{
++		final Npc watchman = addSpawn(watchmanId, new Location(-111301, -15494, -11424, 16383), false, 0, false, instance.getId());
++		if (watchman != null)
++		{
++			watchman.setRunning();
++			watchman.asAttackable().setCanReturnToSpawnPoint(false);
++			
++			final Location centerLoc = instance.getTemplateParameters().getLocation("middlePointRoom3");
++			if (centerLoc != null)
++			{
++				final Location moveTo = new Location(centerLoc.getX() + getRandom(-200, 200), centerLoc.getY() + getRandom(-200, 200), centerLoc.getZ());
++				addMoveToDesire(watchman, moveTo, 23);
++			}
++			for (Player p : instance.getPlayers())
++			{
++				if ((p != null) && !p.isDead())
++				{
++					watchman.asAttackable().addDamageHate(p, 0, 1000);
++				}
++			}
++		}
++	}
++	
++	private Location getPointA(int templateId)
++	{
++		switch (templateId)
++		{
++			case TEMPLATE_ID_SOLO_85:
++			case TEMPLATE_ID_GROUP_85:
++				return new Location(-111601, 19428, -10489);
++			case TEMPLATE_ID_SOLO_90:
++			case TEMPLATE_ID_GROUP_90:
++				return new Location(-120844, -13064, -11597);
++			case TEMPLATE_ID_SOLO_95:
++			case TEMPLATE_ID_GROUP_95:
++				return new Location(-111286, -13076, -11597);
++		}
++		return new Location(-111286, -13076, -11597);
++	}
++	
++	private Location getPointB(int templateId)
++	{
++		switch (templateId)
++		{
++			case TEMPLATE_ID_SOLO_85:
++			case TEMPLATE_ID_GROUP_85:
++				return new Location(-111602, 18638, -10371);
++			case TEMPLATE_ID_SOLO_90:
++			case TEMPLATE_ID_GROUP_90:
++				return new Location(-120849, -13872, -11476);
++			case TEMPLATE_ID_SOLO_95:
++			case TEMPLATE_ID_GROUP_95:
++				return new Location(-111278, -13905, -11469);
++		}
++		return new Location(-111278, -13905, -11469);
++	}
++	
+ 	private boolean isSoloKartia(Instance instance)
+ 	{
